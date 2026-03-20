@@ -203,16 +203,18 @@ function buildPinchBass(){
   pinchBassG.connect(masterG);pinchBassOsc.start();
 }
 
-// ── PERCUSSION — exact sounds from the reference, all routed through FX bus ──
-// Original 3-zone Y system: bottom=bass drum, mid=gritty bass, top=industrial
-// Called on every tap with current Y position
+// ── PERCUSSION — 4 zones, all through FX bus ────────────────────────
+// Bottom (y > 66%): bass drum
+// Middle (33–66%): gritty distorted bass
+// Top-left (y < 33%, left half): inharmonic FM metal clang
+// Top-right (y < 33%, right half): cymbal shimmer (inharmonic sine series)
 function fireSpatialHit(screenX,screenY,energy){
   if(!AC||!isAudio)return;
   const now=AC.currentTime;
-  const zone=screenY<H*.33 ? 2 : screenY<H*.66 ? 1 : 0; // y=0 is top
+  const yZone=screenY<H*.33 ? 2 : screenY<H*.66 ? 1 : 0; // y=0 is top
 
-  if(zone===0){
-    // BASS DRUM — deep sine sweep 120→35Hz + sub noise thud (exact from reference)
+  if(yZone===0){
+    // BASS DRUM — deep sine sweep 120→35Hz + sub noise thud
     const o=AC.createOscillator();o.type='sine';
     o.frequency.setValueAtTime(120,now);
     o.frequency.exponentialRampToValueAtTime(35,now+.18);
@@ -229,8 +231,8 @@ function fireSpatialHit(screenX,screenY,energy){
     const ng=AC.createGain();ng.gain.setValueAtTime(energy*.6,now);ng.gain.exponentialRampToValueAtTime(.0001,now+.08);
     ns.connect(lp);lp.connect(ng);toFX(ng);ns.start(now);
 
-  } else if(zone===1){
-    // GRITTY DISTORTED BASS — sawtooth → heavy waveshaper → bandpass (exact from reference)
+  } else if(yZone===1){
+    // GRITTY DISTORTED BASS — sawtooth → heavy waveshaper → bandpass
     const o=AC.createOscillator();o.type='sawtooth';
     o.frequency.setValueAtTime(55+energy*30,now);
     o.frequency.exponentialRampToValueAtTime(40,now+.22);
@@ -244,24 +246,45 @@ function fireSpatialHit(screenX,screenY,energy){
     g.gain.exponentialRampToValueAtTime(.0001,now+.4);
     o.connect(ws);ws.connect(bp);bp.connect(g);toFX(g);o.start(now);o.stop(now+.45);
 
+  } else if(screenX<W*.5){
+    // TOP-LEFT: bright inharmonic FM metal clang
+    const freq=420+energy*280+Math.random()*80;
+    const car=AC.createOscillator();car.type='sine';car.frequency.value=freq;
+    const mod=AC.createOscillator();mod.type='sine';mod.frequency.value=freq*2.756;
+    const modG=AC.createGain();modG.gain.value=freq*(1.8+energy*2.5);
+    mod.connect(modG);modG.connect(car.frequency);
+    const g=AC.createGain();
+    g.gain.setValueAtTime(0,now);g.gain.linearRampToValueAtTime(energy*.75,now+.001);
+    g.gain.exponentialRampToValueAtTime(.0001,now+.9+energy*.5);
+    car.connect(g);toFX(g);car.start(now);car.stop(now+1.5);mod.start(now);mod.stop(now+1.5);
+    // Second inharmonic partial
+    const car3=AC.createOscillator();car3.type='sine';car3.frequency.value=freq*2.1;
+    const g3=AC.createGain();
+    g3.gain.setValueAtTime(0,now);g3.gain.linearRampToValueAtTime(energy*.3,now+.002);
+    g3.gain.exponentialRampToValueAtTime(.0001,now+.5);
+    car3.connect(g3);toFX(g3);car3.start(now);car3.stop(now+.55);
+
   } else {
-    // INDUSTRIAL — noise burst + detuned saws through resonant filters (exact from reference)
-    const len2=~~(AC.sampleRate*.12);const nb=AC.createBuffer(1,len2,AC.sampleRate);
-    const nd=nb.getChannelData(0);
-    for(let i=0;i<len2;i++)nd[i]=(Math.random()*2-1)*Math.exp(-i/(len2*.35));
-    const ns=AC.createBufferSource();ns.buffer=nb;
-    const hp=AC.createBiquadFilter();hp.type='highpass';hp.frequency.value=800+energy*1200;
-    const ng=AC.createGain();ng.gain.setValueAtTime(0,now);ng.gain.linearRampToValueAtTime(energy*.7,now+.003);
-    ng.gain.exponentialRampToValueAtTime(.0001,now+.15);
-    ns.connect(hp);hp.connect(ng);toFX(ng);ns.start(now);
-    for(const detune of [-18,0,18]){
-      const o=AC.createOscillator();o.type='sawtooth';o.frequency.value=220+energy*80;o.detune.value=detune;
-      const bp=AC.createBiquadFilter();bp.type='bandpass';bp.frequency.value=600+Math.random()*800;bp.Q.value=12;
+    // TOP-RIGHT: cymbal shimmer — inharmonic sine series with long decay
+    const base=600+energy*400+Math.random()*150;
+    const ratios=[1,1.483,1.932,2.694,3.846,5.0];
+    const decays=[1.2,.8,.55,.38,.22,.14];
+    for(let k=0;k<6;k++){
+      const o=AC.createOscillator();o.type='sine';o.frequency.value=base*ratios[k];
       const g=AC.createGain();
-      g.gain.setValueAtTime(0,now);g.gain.linearRampToValueAtTime(energy*.25,now+.003);
-      g.gain.exponentialRampToValueAtTime(.0001,now+.25+Math.random()*.15);
-      o.connect(bp);bp.connect(g);toFX(g);o.start(now);o.stop(now+.45);
+      g.gain.setValueAtTime(0,now);
+      g.gain.linearRampToValueAtTime(energy*(0.5-k*.06),now+.001);
+      g.gain.exponentialRampToValueAtTime(.0001,now+decays[k]);
+      o.connect(g);toFX(g);o.start(now);o.stop(now+decays[k]+.05);
     }
+    // Noise hat transient
+    const nlen=~~(AC.sampleRate*.06);const nb=AC.createBuffer(1,nlen,AC.sampleRate);
+    const nd=nb.getChannelData(0);
+    for(let i=0;i<nlen;i++)nd[i]=(Math.random()*2-1)*Math.exp(-i/(nlen*.2));
+    const ns=AC.createBufferSource();ns.buffer=nb;
+    const nhp=AC.createBiquadFilter();nhp.type='highpass';nhp.frequency.value=4000+energy*3000;
+    const ng=AC.createGain();ng.gain.value=energy*.55;
+    ns.connect(nhp);nhp.connect(ng);toFX(ng);ns.start(now);
   }
 }
 

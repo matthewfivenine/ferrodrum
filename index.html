@@ -466,7 +466,7 @@ let magStr=0,tgtMag=0,explodeAmt=0;
 let stretchAmt=0,tgtStretchAmt=0;
 let stretchDirX=1,stretchDirY=0,stretchDirZ=0;
 let mx=-9999,my=-9999,pmx=-9999,pmy=-9999,dragSpd=0;
-let isDown=false,totalEnergy=0,perturbAmt=0,frame=0;
+let isDown=false,totalEnergy=0,perturbAmt=0,frame=0,isRendering=false;
 
 const magTrail=[];let trailCD=0;
 function pushMagAttractor(str){
@@ -570,13 +570,24 @@ document.addEventListener('touchmove',e=>{
   }
 },{passive:false});
 document.addEventListener('touchstart',e=>{
-  e.preventDefault(); // prevents synthesized mousedown on mobile
+  // If overlay is still showing, this tap is the "initialize" gesture
+  const ov=document.getElementById('ov');
+  if(ov){
+    e.preventDefault();
+    initAudio();
+    ov.style.opacity='0';ov.style.pointerEvents='none';
+    setTimeout(()=>ov.remove(),900);
+    tgtMag=.2;
+    if(!isRendering) render();
+    return;
+  }
+  e.preventDefault();
   touchHandled=true;
   if(e.touches.length===2){
     const t0=e.touches[0],t1=e.touches[1];
     pinchDist=Math.hypot(t0.clientX-t1.clientX,t0.clientY-t1.clientY);
     pinchCenterY=(t0.clientY+t1.clientY)*.5;
-    pinchActive=true;isDown=false;pinchExplodeCD=20; // brief grace before first explosion allowed
+    pinchActive=true;isDown=false;pinchExplodeCD=20;
   } else {
     const t=e.touches[0];mx=t.clientX;my=t.clientY;
     isDown=true;tgtMag=5.0;pushMagAttractor(1.5);triggerExplosion();
@@ -737,6 +748,7 @@ function computeVertexNormals(){
 
 // ── Render ────────────────────────────────────────────────────────
 function render(){
+  isRendering=true;
   c2.fillStyle='#ffffff';
   c2.fillRect(0,0,W,H);
 
@@ -825,7 +837,8 @@ document.getElementById('ov').addEventListener('click',()=>{
   const ov=document.getElementById('ov');
   ov.style.opacity='0';ov.style.pointerEvents='none';
   setTimeout(()=>ov.remove(),900);
-  tgtMag=.2;render();
+  tgtMag=.2;
+  if(!isRendering) render();
 });
 </script>
 </body>

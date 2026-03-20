@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FERROFLUID</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Syncopate:wght@700&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;background:#fff;overflow:hidden;cursor:none}
+canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1}
+#lt{position:fixed;top:26px;left:50%;transform:translateX(-50%);z-index:10;
+  font-family:'Syncopate',sans-serif;font-size:9px;font-weight:700;
+  letter-spacing:.6em;color:#bbb;white-space:nowrap;pointer-events:none}
+#lb{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);z-index:10;
+  font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:.3em;color:#ccc;white-space:nowrap;pointer-events:none}
+#ov{position:fixed;inset:0;background:#fff;z-index:100;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;cursor:pointer;transition:opacity .8s}
+#ov h1{font-family:'Syncopate',sans-serif;font-size:clamp(16px,3.5vw,38px);
+  font-weight:700;letter-spacing:.5em;color:#ccc}
+#ov p{font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:.4em;
+  color:#bbb;animation:bl 2s ease-in-out infinite}
+@keyframes bl{0%,100%{opacity:.2}50%{opacity:1}}
+#cur{position:fixed;width:10px;height:10px;border-radius:50%;
+  background:rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.3);
+  pointer-events:none;z-index:200;transform:translate(-50%,-50%);transition:transform .08s}
+</style>
+</head>
+<body>
+<div id="ov"><h1>FERROFLUID</h1><p>CLICK TO INITIALIZE</p></div>
+<canvas id="c"></canvas>
+<div id="lt">FERROFLUID &nbsp;/&nbsp; ROSENSWEIG INSTABILITY</div>
+<div id="lb">CLICK TO EXPLODE &nbsp;·&nbsp; DRAG TO STRETCH &nbsp;·&nbsp; PINCH TO OVERDRIVE</div>
+<div id="cur"></div>
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════
+// AUDIO
+// ═══════════════════════════════════════════════════════════════════
+let AC=null,masterG,compN,droneG,scrapeG,bassODGain,pinchBassFilter,isAudio=false;
+
+function initAudio(){
+  if(isAudio)return;isAudio=true;
+  AC=new(window.AudioContext||window.webkitAudioContext)();
+  masterG=AC.createGain();masterG.gain.value=0;
+  masterG.gain.linearRampToValueAtTime(.72,AC.currentTime+1.5);
+  compN=AC.createDynamicsCompressor();
+  compN.threshold.value=-13;compN.ratio.value=4.5;compN.attack.value=.002;compN.release.value=.09;
+  const rev=makeRev(2.5);const rw=AC.createGain();rw.gain.value=.22;
+  masterG.connect(compN);compN.connect(rev);rev.connect(rw);rw.connect(AC.destination);
+  compN.connect(AC.destination);
+  buildDrone();buildScrape();buildPinchBass();
+}
+
+function makeRev(d){
+  const cv=AC.createConvolver(),len=AC.sampleRate*d;
+  const b=AC.createBuffer(2,len,AC.sampleRate);
+  for(let ch=0;ch<2;ch++){const dd=b.getChannelData(ch);
+    for(let i=0;i<len;i++)dd[i]=(Math.random()*2-1)*Math.pow(1-i/len,2)*.5;}
+  cv.buffer=b;return cv;
+}
+
+function buildDrone(){
+  const len=AC.sampleRate*3,buf=AC.createBuffer(1,len,AC.sampleRate),d=buf.getChannelData(0);
+  let a=0;for(let i=0;i<len;i++){a+=(Math.random()*2-1)*.09;a*=.98;d[i]=a*7;}
+  const src=AC.createBufferSource();src.buffer=buf;src.loop=true;
+  const f1=AC.createBiquadFilter();f1.type='bandpass';f1.frequency.value=44;f1.Q.value=2;
+  const f2=AC.createBiquadFilter();f2.type='bandpass';f2.frequency.value=92;f2.Q.value=4;
+  droneG=AC.createGain();droneG.gain.value=.05;
+  src.connect(f1);src.connect(f2);f1.connect(droneG);f2.connect(droneG);droneG.connect(masterG);src.start();
+  const lfo=AC.createOscillator();lfo.frequency.value=.05;
+  const lg=AC.createGain();lg.gain.value=.02;lfo.connect(lg);lg.connect(droneG.gain);lfo.start();
+}
+
+function buildScrape(){
+  const len=AC.sampleRate*2,buf=AC.createBuffer(1,len,AC.sampleRate),d=buf.getChannelData(0);
+  for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
+  const src=AC.createBufferSource();src.buffer=buf;src.loop=true;
+  const hp=AC.createBiquadFilter();hp.type='highpass';hp.frequency.value=600;
+  const pf=AC.createBiquadFilter();pf.type='bandpass';pf.frequency.value=800;pf.Q.value=1.8;
+  scrapeG=AC.createGain();scrapeG.gain.value=0;
+  src.connect(hp);hp.connect(pf);pf.connect(scrapeG);scrapeG.connect(masterG);src.start();
+}
+
+function buildPinchBass(){
+  const len=AC.sampleRate*3,buf=AC.createBuffer(1,len,AC.sampleRate),d=buf.getChannelData(0);
+  let a=0;for(let i=0;i<len;i++){a+=(Math.random()*2-1)*.14;a*=.975;d[i]=a*9;}
+  const src=AC.createBufferSource();src.buffer=buf;src.loop=true;
+  const ws=AC.createWaveShaper();
+  const curve=new Float32Array(512);
+  for(let i=0;i<512;i++){const x=i/256-1;curve[i]=Math.tanh(x*18)*.92;}
+  ws.curve=curve;ws.oversample='4x';
+  pinchBassFilter=AC.createBiquadFilter();pinchBassFilter.type='bandpass';
+  pinchBassFilter.frequency.value=55;pinchBassFilter.Q.value=4;
+  const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=200;
+  bassODGain=AC.createGain();bassODGain.gain.value=0;
+  src.connect(ws);ws.connect(pinchBassFilter);pinchBassFilter.connect(lp);
+  lp.connect(bassODGain);bassODGain.connect(masterG);src.start();
+}
+
+let impCD=0;
+function fireImpact(energy,char){
+  if(!AC||!isAudio)return;
+  const now=AC.currentTime;
+  const len=AC.sampleRate*(.035+energy*.18);
+  const buf=AC.createBuffer(1,len,AC.sampleRate);const d=buf.getChannelData(0);
+  if(char<.4){
+    let a=0;for(let i=0;i<len;i++){a+=(Math.random()*2-1)*.12;a*=.97;d[i]=a*5*Math.exp(-i/(len*.28));}
+    const f=AC.createBiquadFilter();f.type='bandpass';f.frequency.value=50+energy*80;f.Q.value=2.5;
+    const g=AC.createGain();g.gain.setValueAtTime(0,now);g.gain.linearRampToValueAtTime(energy*.85,now+.004);
+    g.gain.exponentialRampToValueAtTime(.0001,now+len/AC.sampleRate*.9);
+    const s=AC.createBufferSource();s.buffer=buf;s.connect(f);f.connect(g);g.connect(masterG);s.start(now);
+  } else {
+    for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/(len*.16));
+    const f=AC.createBiquadFilter();f.type='bandpass';f.frequency.value=300+energy*600;f.Q.value=7;
+    const g=AC.createGain();g.gain.setValueAtTime(0,now);g.gain.linearRampToValueAtTime(energy*.65,now+.002);
+    g.gain.exponentialRampToValueAtTime(.0001,now+.08+energy*.09);
+    const s=AC.createBufferSource();s.buffer=buf;s.connect(f);f.connect(g);g.connect(masterG);s.start(now);
+  }
+}
+
+function fireExplosion(){
+  if(!AC||!isAudio)return;
+  const now=AC.currentTime;
+  const l1=AC.sampleRate*.7;const b1=AC.createBuffer(1,l1,AC.sampleRate);const d1=b1.getChannelData(0);
+  let a=0;for(let i=0;i<l1;i++){a+=(Math.random()*2-1)*.18;a*=.975;d1[i]=a*9*Math.exp(-i/(l1*.3));}
+  const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=110;
+  const g1=AC.createGain();g1.gain.setValueAtTime(0,now);g1.gain.linearRampToValueAtTime(1.4,now+.004);
+  g1.gain.exponentialRampToValueAtTime(.0001,now+.7);
+  const s1=AC.createBufferSource();s1.buffer=b1;s1.connect(lp);lp.connect(g1);g1.connect(masterG);s1.start(now);
+  const l2=AC.sampleRate*.4;const b2=AC.createBuffer(1,l2,AC.sampleRate);const d2=b2.getChannelData(0);
+  for(let i=0;i<l2;i++)d2[i]=(Math.random()*2-1)*Math.exp(-i/(l2*.2));
+  const hp=AC.createBiquadFilter();hp.type='highpass';hp.frequency.value=1200;
+  const g2=AC.createGain();g2.gain.setValueAtTime(0,now);g2.gain.linearRampToValueAtTime(.7,now+.003);
+  g2.gain.exponentialRampToValueAtTime(.0001,now+.4);
+  const s2=AC.createBufferSource();s2.buffer=b2;s2.connect(hp);hp.connect(g2);g2.connect(masterG);s2.start(now);
+}
+
+let pinchDist=0,pinchActive=false,pinchIntensity=0,pinchVel=0,pinchCenterY=0;
+
+function updateAudio(energy,dspd,perturb,isDrg){
+  if(!AC||!isAudio)return;
+  if(droneG) droneG.gain.setTargetAtTime(Math.min(.45,.03+energy*.25+perturb*.08),AC.currentTime,.15);
+  if(scrapeG) scrapeG.gain.setTargetAtTime(isDrg?Math.min(.5,dspd*.022+perturb*.15):0,AC.currentTime,.04);
+  if(bassODGain) bassODGain.gain.setTargetAtTime(Math.min(.9,pinchIntensity*1.1),AC.currentTime,pinchIntensity>.01?.03:.25);
+  if(pinchBassFilter&&pinchIntensity>.01){
+    const t=1-Math.max(0,Math.min(1,(pinchCenterY-H*.15)/(H*.7)));
+    pinchBassFilter.frequency.setTargetAtTime(40+t*50,AC.currentTime,.08);
+  }
+  impCD--;
+  if(impCD<=0&&(perturb>.06||dspd>6||pinchIntensity>.2)){
+    const e=Math.min(1,perturb*1.6+dspd*.014+pinchIntensity*.35);
+    if(e>.05){fireImpact(e,Math.random());impCD=Math.max(3,9-Math.floor(e*6));}
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// GEOMETRY — 5x subdivided icosahedron → 10242 verts, 20480 faces
+// ═══════════════════════════════════════════════════════════════════
+const cv_=document.getElementById('c');
+const c2=cv_.getContext('2d');
+let W,H,CX,CY,SCALE;
+function resize(){W=cv_.width=window.innerWidth;H=cv_.height=window.innerHeight;CX=W/2;CY=H/2;SCALE=Math.min(W,H)*.215;}
+resize();window.addEventListener('resize',resize);
+
+function buildGeo(){
+  const t=(1+Math.sqrt(5))/2,s=1/Math.sqrt(1+t*t);
+  let v=[[-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],[0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],
+         [t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]].map(p=>p.map(x=>x*s));
+  let f=[[0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],[1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
+         [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],[4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]];
+  for(let sd=0;sd<5;sd++){
+    const nf=[],mc={};
+    const mid=(a,b)=>{
+      const k=Math.min(a,b)*1e7+Math.max(a,b);
+      if(mc[k]!=null)return mc[k];
+      const p=[(v[a][0]+v[b][0])*.5,(v[a][1]+v[b][1])*.5,(v[a][2]+v[b][2])*.5];
+      const l=Math.sqrt(p[0]**2+p[1]**2+p[2]**2);
+      v.push([p[0]/l,p[1]/l,p[2]/l]);return mc[k]=v.length-1;
+    };
+    for(const[a,b,c_]of f){const ab=mid(a,b),bc=mid(b,c_),ca=mid(c_,a);
+      nf.push([a,ab,ca],[b,bc,ab],[c_,ca,bc],[ab,bc,ca]);}
+    f=nf;
+  }
+  const adj=[];
+  for(let i=0;i<v.length;i++) adj.push([]);
+  for(const[a,b,c_]of f){
+    const add=(x,y)=>{if(!adj[x].includes(y))adj[x].push(y);};
+    add(a,b);add(a,c_);add(b,a);add(b,c_);add(c_,a);add(c_,b);
+  }
+  return{v,f,adj};
+}
+
+const geo=buildGeo();
+const NV=geo.v.length,NF=geo.f.length;
+
+// Flat coord arrays
+const gvx=new Float32Array(NV),gvy=new Float32Array(NV),gvz=new Float32Array(NV);
+for(let i=0;i<NV;i++){gvx[i]=geo.v[i][0];gvy[i]=geo.v[i][1];gvz[i]=geo.v[i][2];}
+
+// Simulation
+const vDisp=new Float32Array(NV),vVel=new Float32Array(NV),vTgt=new Float32Array(NV);
+const vPhA=Float32Array.from({length:NV},()=>Math.random()*Math.PI*2);
+const vPhB=Float32Array.from({length:NV},()=>Math.random()*Math.PI*2);
+const vFrA=Float32Array.from({length:NV},()=>.003+Math.random()*.006);
+const vFrB=Float32Array.from({length:NV},()=>.0006+Math.random()*.0014);
+const vAmpA=Float32Array.from({length:NV},()=>.06+Math.random()*.10);
+
+// Transform buffers
+const wx=new Float32Array(NV),wy=new Float32Array(NV),wz_=new Float32Array(NV);
+const sx=new Float32Array(NV),sy=new Float32Array(NV),sz=new Float32Array(NV);
+
+// Per-vertex normals + brightness (Gouraud)
+const vnx=new Float32Array(NV),vny=new Float32Array(NV),vnz=new Float32Array(NV);
+const vBright=new Float32Array(NV);
+
+// Face index arrays
+const faceA=new Int32Array(NF),faceB=new Int32Array(NF),faceC=new Int32Array(NF);
+for(let i=0;i<NF;i++){faceA[i]=geo.f[i][0];faceB[i]=geo.f[i][1];faceC[i]=geo.f[i][2];}
+
+// ── State ─────────────────────────────────────────────────────────
+let rotY=0,rotX=0.18,rotYv=.0018;
+const ROT_BASE=.0018;
+let magStr=0,tgtMag=0,explodeAmt=0;
+let stretchAmt=0,tgtStretchAmt=0;
+let stretchDirX=1,stretchDirY=0,stretchDirZ=0;
+let mx=-9999,my=-9999,pmx=-9999,pmy=-9999,dragSpd=0;
+let isDown=false,totalEnergy=0,perturbAmt=0,frame=0;
+
+const magTrail=[];let trailCD=0;
+function pushMagAttractor(str){
+  trailCD--;if(trailCD>0)return;trailCD=2;
+  const[dx,dy,dz]=mouseTo3D();
+  magTrail.push({dx,dy,dz,str:str||1});
+  if(magTrail.length>20)magTrail.shift();
+}
+function decayTrail(){
+  for(let i=magTrail.length-1;i>=0;i--){
+    magTrail[i].str*=.86;if(magTrail[i].str<.02)magTrail.splice(i,1);
+  }
+}
+
+const waves=[];let waveCD=20;
+function spawnWave(nx,ny,nz,amp,spd,maxAge){
+  if(waves.length>40)waves.splice(0,5);
+  waves.push({nx,ny,nz,amp,spd:spd||.03,age:0,maxAge:maxAge||130});
+}
+
+const LIGHT=normed(-0.5,-0.7,0.52);
+const LIGHT2=normed(0.6,0.25,-0.38);
+function normed(x,y,z){const l=Math.sqrt(x*x+y*y+z*z);return[x/l,y/l,z/l];}
+const Lx=LIGHT[0],Ly=LIGHT[1],Lz=LIGHT[2];
+const L2x=LIGHT2[0],L2y=LIGHT2[1],L2z=LIGHT2[2];
+
+// ── Input ─────────────────────────────────────────────────────────
+const curEl=document.getElementById('cur');
+function mouseTo3D(){
+  const nx=(mx-CX)/SCALE,ny=(my-CY)/SCALE;
+  const cy_=Math.cos(-rotY),sy_=Math.sin(-rotY);
+  const cx_=Math.cos(-rotX),sx_=Math.sin(-rotX);
+  let px=nx*cy_+1.2*sy_,py_=ny,pz_=-nx*sy_+1.2*cy_;
+  const py2=py_*cx_-pz_*sx_,pz2=py_*sx_+pz_*cx_;
+  const l=Math.sqrt(px*px+py2*py2+pz2*pz2)||1;
+  return[px/l,py2/l,pz2/l];
+}
+
+document.addEventListener('mousemove',e=>{
+  dragSpd=Math.hypot(e.clientX-pmx,e.clientY-pmy);
+  pmx=mx;pmy=my;mx=e.clientX;my=e.clientY;
+  curEl.style.left=mx+'px';curEl.style.top=my+'px';
+  if(isDown){
+    pushMagAttractor(1);
+    if(dragSpd>.5){
+      const dx=e.clientX-pmx,dy_=e.clientY-pmy;
+      const cy_=Math.cos(-rotY),sy_=Math.sin(-rotY);
+      let wx_=dx/SCALE*cy_,wy_=dy_/SCALE,wz__=-dx/SCALE*sy_;
+      const l=Math.sqrt(wx_*wx_+wy_*wy_+wz__*wz__)||1;
+      stretchDirX=wx_/l;stretchDirY=wy_/l;stretchDirZ=wz__/l;
+      tgtStretchAmt=Math.min(1.8,tgtStretchAmt+dragSpd*.012);
+    }
+  }
+});
+document.addEventListener('mousedown',e=>{
+  if(e.target.closest('#ov'))return;
+  isDown=true;tgtMag=5.0;curEl.style.transform='translate(-50%,-50%) scale(.5)';
+  pushMagAttractor(1.5);triggerExplosion();
+  setTimeout(()=>curEl.style.transform='translate(-50%,-50%) scale(2)',80);
+  setTimeout(()=>curEl.style.transform='translate(-50%,-50%) scale(1)',200);
+});
+document.addEventListener('mouseup',()=>{isDown=false;tgtMag=.3;tgtStretchAmt=0;curEl.style.transform='translate(-50%,-50%) scale(1)';});
+document.addEventListener('mouseleave',()=>{isDown=false;tgtMag=0;tgtStretchAmt=0;});
+document.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(e.touches.length===2){
+    const t0=e.touches[0],t1=e.touches[1];
+    const nd=Math.hypot(t0.clientX-t1.clientX,t0.clientY-t1.clientY);
+    if(pinchDist>0){
+      const delta=nd-pinchDist,rate=Math.abs(delta)/Math.max(1,pinchDist);
+      pinchCenterY=(t0.clientY+t1.clientY)*.5;
+      pinchVel+=rate*1.8;pinchIntensity=Math.min(1,pinchIntensity+rate*1.4);
+      if(delta<-2){for(let i=0;i<NV;i++)vVel[i]-=rate*.08;tgtMag=Math.min(5,tgtMag+rate*3);}
+      else if(delta>2) triggerExplosion();
+    }
+    pinchDist=nd;pinchActive=true;isDown=false;
+  } else {
+    pinchActive=false;pinchDist=0;
+    const t=e.touches[0];dragSpd=Math.hypot(t.clientX-pmx,t.clientY-pmy);
+    pmx=mx;pmy=my;mx=t.clientX;my=t.clientY;
+    curEl.style.left=mx+'px';curEl.style.top=my+'px';
+    if(isDown){
+      pushMagAttractor(1);
+      if(dragSpd>.5){
+        const dx=t.clientX-pmx,dy_=t.clientY-pmy;
+        const cy_=Math.cos(-rotY),sy_=Math.sin(-rotY);
+        let wx_=dx/SCALE*cy_,wy_=dy_/SCALE,wz__=-dx/SCALE*sy_;
+        const l=Math.sqrt(wx_*wx_+wy_*wy_+wz__*wz__)||1;
+        stretchDirX=wx_/l;stretchDirY=wy_/l;stretchDirZ=wz__/l;
+        tgtStretchAmt=Math.min(1.8,tgtStretchAmt+dragSpd*.012);
+      }
+    }
+  }
+},{passive:false});
+document.addEventListener('touchstart',e=>{
+  if(e.touches.length===2){
+    const t0=e.touches[0],t1=e.touches[1];
+    pinchDist=Math.hypot(t0.clientX-t1.clientX,t0.clientY-t1.clientY);
+    pinchCenterY=(t0.clientY+t1.clientY)*.5;
+    pinchActive=true;isDown=false;
+  } else {
+    const t=e.touches[0];mx=t.clientX;my=t.clientY;
+    isDown=true;tgtMag=5.0;pushMagAttractor(1.5);triggerExplosion();pinchActive=false;pinchDist=0;
+  }
+});
+document.addEventListener('touchend',e=>{
+  if(e.touches.length<2){pinchActive=false;pinchDist=0;}
+  if(e.touches.length===0){isDown=false;tgtMag=.3;tgtStretchAmt=0;}
+});
+document.addEventListener('wheel',e=>{
+  if(!isAudio)return;e.preventDefault();
+  if(e.ctrlKey||Math.abs(e.deltaY)>10){
+    const rate=Math.min(1,Math.abs(e.deltaY)*.008);
+    pinchVel+=rate*2.2;pinchIntensity=Math.min(1,pinchIntensity+rate*1.8);
+    if(e.deltaY>0){for(let i=0;i<NV;i++)vVel[i]+=(.08+Math.random()*.1)*rate*2;tgtMag=Math.min(5,tgtMag+rate*4);}
+    else triggerExplosion();
+  }
+},{passive:false});
+
+function triggerExplosion(){
+  explodeAmt=1.0;fireExplosion();
+  for(let i=0;i<12;i++){
+    const ri=Math.floor(Math.random()*NV);
+    spawnWave(gvx[ri],gvy[ri],gvz[ri],.5+Math.random()*.5,.05+Math.random()*.04,170);
+  }
+  for(let i=0;i<NV;i++) vVel[i]+=.12+Math.random()*.18;
+}
+
+// ── Physics ───────────────────────────────────────────────────────
+function updateVerts(){
+  magStr+=(tgtMag-magStr)*.06;
+  stretchAmt+=(tgtStretchAmt-stretchAmt)*.07;tgtStretchAmt*=.90;
+  if(explodeAmt>.001)explodeAmt*=.94;else explodeAmt=0;
+  pinchVel*=.88;pinchIntensity=Math.min(1,Math.max(0,pinchIntensity-.015+pinchVel*.04));
+  decayTrail();
+
+  waveCD--;
+  if(waveCD<=0){
+    const ri=Math.floor(Math.random()*NV);
+    spawnWave(gvx[ri],gvy[ri],gvz[ri],.08+Math.random()*.18,.016+Math.random()*.022,100+Math.random()*50);
+    waveCD=18+Math.floor(Math.random()*20);
+  }
+  for(let w=waves.length-1;w>=0;w--){waves[w].age++;if(waves[w].age>waves[w].maxAge)waves.splice(w,1);}
+
+  const[mdx,mdy,mdz]=mouseTo3D();
+  const dfc=Math.hypot(mx-CX,my-CY)/SCALE;
+  const mFall=Math.max(0,1-dfc*.4);
+  const tlen=magTrail.length,wlen=waves.length;
+  let energy=0,perturb=0;
+
+  for(let i=0;i<NV;i++){
+    const vx=gvx[i],vy=gvy[i],vz=gvz[i];
+
+    // Magnetic: power 12 = very tight spike focus (~5° cone)
+    let mag=0;
+    const dl=vx*mdx+vy*mdy+vz*mdz;
+    if(dl>0) mag+=Math.pow(dl,12)*magStr*mFall*5.0;
+    for(let t=0;t<tlen;t++){
+      const at=magTrail[t];
+      const dot=vx*at.dx+vy*at.dy+vz*at.dz;
+      if(dot>0) mag+=Math.pow(dot,12)*at.str*magStr*6.0;
+    }
+
+    // Stretch: power 8 spikes in drag direction
+    const sa=vx*stretchDirX+vy*stretchDirY+vz*stretchDirZ;
+    const stretch=sa>0?Math.pow(sa,8)*stretchAmt*4.5:0;
+
+    // Autonomous
+    const b1=Math.sin(frame*vFrA[i]+vPhA[i])*vAmpA[i];
+    const b2=Math.sin(frame*vFrB[i]+vPhB[i])*(vAmpA[i]*.5);
+    const breath=(b1+b2+1)*.5*.08;
+
+    // Waves — nonlinear crest sharpening
+    let wsum=0;
+    for(let w=0;w<wlen;w++){
+      const wv=waves[w];
+      const cosd=vx*wv.nx+vy*wv.ny+vz*wv.nz;
+      const dist=Math.acos(Math.max(-1,Math.min(1,cosd)));
+      const wf=wv.age*wv.spd,spread=.24+wv.age*.003,delta=dist-wf;
+      if(Math.abs(delta)<spread){
+        const raw=wv.amp*Math.exp(-(delta*delta)/(spread*spread*.2))*Math.sin(delta*12)*(1-wv.age/wv.maxAge);
+        wsum+=raw>0?raw*raw*3.5:0;
+      }
+    }
+
+    // Explosion
+    const exp=explodeAmt*(.2+Math.random()*1.4);
+
+    vTgt[i]=mag+stretch+breath+Math.max(0,wsum)+exp;
+
+    // Neighbor tension: near zero so spikes stay sharp
+    const nbrs=geo.adj[i];
+    let navg=0;const nl=nbrs.length;
+    for(let j=0;j<nl;j++) navg+=vDisp[nbrs[j]];
+    navg/=nl;
+
+    const spring=(vTgt[i]-vDisp[i])*.22;
+    const tension=(navg-vDisp[i])*.006; // almost zero
+    vVel[i]+=spring+tension;
+    vVel[i]*=.68;
+    vDisp[i]+=vVel[i];
+    vDisp[i]=Math.max(0,Math.min(4.0,vDisp[i]));
+
+    energy+=vDisp[i];perturb+=Math.abs(vVel[i]);
+  }
+
+  totalEnergy=energy/NV;perturbAmt=perturb/NV;
+  rotYv+=(ROT_BASE-rotYv)*.012;
+  rotYv+=perturbAmt*.004*(Math.random()-.5);
+  rotY+=rotYv;
+}
+
+// ── Transform ─────────────────────────────────────────────────────
+function transformVerts(){
+  const cy_=Math.cos(rotY),sy_=Math.sin(rotY);
+  const cx_=Math.cos(rotX),sx_=Math.sin(rotX);
+  const fov=2.85;
+  for(let i=0;i<NV;i++){
+    const r=1.0+vDisp[i];
+    const px=gvx[i]*r,py=gvy[i]*r,pz=gvz[i]*r;
+    const rx_=px*cy_+pz*sy_,rz__=-px*sy_+pz*cy_;
+    const ry_=py*cx_-rz__*sx_,rz_=py*sx_+rz__*cx_;
+    wx[i]=rx_;wy[i]=ry_;wz_[i]=rz_;
+    const z=rz_+fov;
+    sx[i]=CX+rx_/z*SCALE*fov;
+    sy[i]=CY+ry_/z*SCALE*fov;
+    sz[i]=z;
+  }
+}
+
+// ── Gouraud smooth normals ────────────────────────────────────────
+function computeVertexNormals(){
+  for(let i=0;i<NV;i++){vnx[i]=0;vny[i]=0;vnz[i]=0;}
+  for(let fi=0;fi<NF;fi++){
+    const ai=faceA[fi],bi=faceB[fi],ci=faceC[fi];
+    const e1x=wx[bi]-wx[ai],e1y=wy[bi]-wy[ai],e1z=wz_[bi]-wz_[ai];
+    const e2x=wx[ci]-wx[ai],e2y=wy[ci]-wy[ai],e2z=wz_[ci]-wz_[ai];
+    const fnx=e1y*e2z-e1z*e2y,fny=e1z*e2x-e1x*e2z,fnz=e1x*e2y-e1y*e2x;
+    vnx[ai]+=fnx;vny[ai]+=fny;vnz[ai]+=fnz;
+    vnx[bi]+=fnx;vny[bi]+=fny;vnz[bi]+=fnz;
+    vnx[ci]+=fnx;vny[ci]+=fny;vnz[ci]+=fnz;
+  }
+  for(let i=0;i<NV;i++){
+    const l=Math.sqrt(vnx[i]*vnx[i]+vny[i]*vny[i]+vnz[i]*vnz[i])||1;
+    const nx=vnx[i]/l,ny=vny[i]/l,nz=vnz[i]/l;
+    const d1=Math.max(0,nx*Lx+ny*Ly+nz*Lz);
+    const d2=Math.max(0,nx*L2x+ny*L2y+nz*L2z)*.15;
+    const NdL=nx*Lx+ny*Ly+nz*Lz;
+    const rflx=2*NdL*nx-Lx,rfly=2*NdL*ny-Ly,rflz=2*NdL*nz-Lz;
+    const rl=Math.sqrt(rflx*rflx+rfly*rfly+rflz*rflz)||1;
+    const spec=Math.pow(Math.max(0,-rflz/rl),52);
+    const spec2=Math.pow(Math.max(0,-rflz/rl),4)*.07;
+    vBright[i]=Math.min(1,.025+d1*.44+d2+spec*.96+spec2+vDisp[i]*.08);
+  }
+}
+
+// ── Render ────────────────────────────────────────────────────────
+function render(){
+  c2.fillStyle='#ffffff';
+  c2.fillRect(0,0,W,H);
+
+  updateVerts();
+  transformVerts();
+  computeVertexNormals();
+
+  // Depth-bucket sort (back-to-front)
+  const DBUCKETS=48;
+  const dbuckets=new Array(DBUCKETS);
+  for(let b=0;b<DBUCKETS;b++) dbuckets[b]=[];
+  const DMIN=1.0,DMAX=7.0,DRANGE=DMAX-DMIN;
+
+  for(let fi=0;fi<NF;fi++){
+    const ai=faceA[fi],bi=faceB[fi],ci=faceC[fi];
+    const fnz=(wx[bi]-wx[ai])*(wy[ci]-wy[ai])-(wy[bi]-wy[ai])*(wx[ci]-wx[ai]);
+    if(fnz>=0) continue;
+    const depth=(sz[ai]+sz[bi]+sz[ci])*.333;
+    const bucket=Math.max(0,Math.min(DBUCKETS-1,Math.floor((depth-DMIN)/DRANGE*DBUCKETS)));
+    dbuckets[bucket].push(fi);
+  }
+
+  for(let b=DBUCKETS-1;b>=0;b--){
+    const bk=dbuckets[b];
+    for(let j=0;j<bk.length;j++){
+      const fi=bk[j];
+      const ai=faceA[fi],bi=faceB[fi],ci=faceC[fi];
+      const ba=vBright[ai],bb=vBright[bi],bc=vBright[ci];
+      const avgB=(ba+bb+bc)*.333;
+      const bmax=Math.max(ba,bb,bc),bmin=Math.min(ba,bb,bc);
+
+      if(bmax-bmin<0.04){
+        // Flat fill — fast path
+        const bv=Math.round(avgB*255),bh=Math.min(255,bv+7);
+        c2.fillStyle=`rgb(${bv},${bv},${bh})`;
+        c2.beginPath();
+        c2.moveTo(sx[ai],sy[ai]);c2.lineTo(sx[bi],sy[bi]);c2.lineTo(sx[ci],sy[ci]);
+        c2.closePath();c2.fill();
+      } else {
+        // Gouraud: gradient from brightest vertex toward midpoint of other two
+        let ox,oy,ob,dx2,dy2,mb;
+        if(ba>=bb&&ba>=bc){
+          ox=sx[ai];oy=sy[ai];ob=ba;
+          dx2=(sx[bi]+sx[ci])*.5;dy2=(sy[bi]+sy[ci])*.5;mb=(bb+bc)*.5;
+        } else if(bb>=ba&&bb>=bc){
+          ox=sx[bi];oy=sy[bi];ob=bb;
+          dx2=(sx[ai]+sx[ci])*.5;dy2=(sy[ai]+sy[ci])*.5;mb=(ba+bc)*.5;
+        } else {
+          ox=sx[ci];oy=sy[ci];ob=bc;
+          dx2=(sx[ai]+sx[bi])*.5;dy2=(sy[ai]+sy[bi])*.5;mb=(ba+bb)*.5;
+        }
+        const dl=Math.sqrt((dx2-ox)**2+(dy2-oy)**2);
+        const r0=Math.round(ob*255),r0h=Math.min(255,r0+10);
+        const r1=Math.round(mb*255),r1h=Math.min(255,r1+6);
+        if(dl<0.5){
+          c2.fillStyle=`rgb(${Math.round(avgB*255)},${Math.round(avgB*255)},${Math.min(255,Math.round(avgB*255)+7)})`;
+        } else {
+          const g=c2.createLinearGradient(ox,oy,dx2,dy2);
+          g.addColorStop(0,`rgb(${r0},${r0},${r0h})`);
+          g.addColorStop(1,`rgb(${r1},${r1},${r1h})`);
+          c2.fillStyle=g;
+        }
+        c2.beginPath();
+        c2.moveTo(sx[ai],sy[ai]);c2.lineTo(sx[bi],sy[bi]);c2.lineTo(sx[ci],sy[ci]);
+        c2.closePath();c2.fill();
+      }
+    }
+  }
+
+  // Shadow
+  const shg=c2.createRadialGradient(CX,CY+SCALE*1.12,0,CX,CY+SCALE*1.12,SCALE*.9);
+  shg.addColorStop(0,'rgba(0,0,0,.08)');shg.addColorStop(1,'rgba(0,0,0,0)');
+  c2.beginPath();c2.ellipse(CX,CY+SCALE*1.15,SCALE*.85,SCALE*.12,0,0,Math.PI*2);
+  c2.fillStyle=shg;c2.fill();
+
+  updateAudio(totalEnergy,dragSpd,perturbAmt,isDown);
+  frame++;
+  requestAnimationFrame(render);
+}
+
+document.getElementById('ov').addEventListener('click',()=>{
+  initAudio();
+  const ov=document.getElementById('ov');
+  ov.style.opacity='0';ov.style.pointerEvents='none';
+  setTimeout(()=>ov.remove(),900);
+  tgtMag=.2;render();
+});
+</script>
+</body>
+</html>
